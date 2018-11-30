@@ -1,0 +1,167 @@
+ARC338 How AWS Minimizes Blast Radius of Failures
+- Regional control planes serve traffic to data plane
+  - Are AZ failure tolerant intrinsically
+  - Data plane examples: EC2 VMs, Dynamo Tables
+
+NET305 AWS Global Network "Behind the Scenes"
+- Datacenter Network Monitoring
+  - Monitoring all the things
+    - Data plane probing, using all available paths
+    - Anomaly detection: prove that network bits go in/out of R/S gear, alert on anomaly
+  - Cool thing: 6192 fiber strand cables!
+  
+ARC337 Control Systems
+- How do we build simple and stable control systems?
+  - "Quality is not an act, it is a habit"
+  - Geolocation Lat/Lon helped determine datacenter buildout location for AZ etc
+    - 75% of the earth was routed to the wrong CloudFront
+- What goes into high quality design
+  - Fearless environment/ecosystem
+  - TESTING
+  - Security/Durability/Availability/Speed (Colm's Order)
+- Control planes
+  - Bigger design challenge than data planes (think about K8S master controllers - ReplicaSets etc)
+  - Control planes can cause massively scaled outages
+  - Control resource lifecycle (e.g. provision services, DDB tables, ELB, etc)
+    - Merged software and service configuration
+- Control theory
+  - Under appreciated branches of science, critical distributed systems
+  - Know what state the system is currently under
+    - Measurement factor critical (hint hint, monitoring!)
+    - Closed loop control is ideal state for
+    - PID derivative loop (GO DEEP ON THIS; could systems be stable?)
+      - Designing Distributed Control Systems
+- 10 Patterns for Controlling Control PLanes
+  - Example: S3 2008 Outage Only one region, RCA: one box was corrupting one bit, propagated by gossip protocol globally to all storage nodes
+    1: Are you checksumming everything? More broadly, how to you validate your data?
+    2: Cryptographic Auth
+      - NEVER ALLOW A NON-PRODUCTION CONTROL PLANE TALK TO THE PROD! (personally burned by this)
+      - Control planes critical by nature even if distributed
+    3: Cells/Shells/Poison Tasters
+      - Poison Tasters: Check up front that a change is safe
+      - Horizontally scale out control plane (think multi-master)
+    4: Asynchronous Coupling
+      - Synchronous systems are very strongly coupled
+      - Asynchronous systmes are more tolerant
+      - Partial progress, even if some components unavailable
+      - Queueing of requests
+    5: CLOSED FEEDBACK LOOPS!
+      - Monitoring, telemetry, observability
+    6: Small pushes, large pulls
+      - Push config or pull config
+        - Wrong question -- think instead of thundering herd phenomenon affecting fleet
+	- Consider server fleet size (small) in proportion to overall fleet (big)
+    7: Caching
+      - Caches are bi-modal
+      - DNS caching, for instance, if served stale records would be much more efficient
+      - Warming cache
+    8: Throttles
+      - Moderate problem requestors
+      - Throttle ELB ability to EC2 instantiation
+        - E.G. EC2 registiring after AZ failure with ELB for instance association
+    9: Deltas
+      - Compute deltas and distribute patches, if config change is large
+      - Versioning data is great, even if simple K/V in DB
+      - Rollback, replay events, etc
+    10: Modality/Constant-Work
+      - Think about network route/switching gear
+      - Minimize number of code execution paths
+        - Think about kernel, how throughly tested EACH COMPONENT is
+	- Warden - test each possible auto remediation path
+      - "Thundering Herd"
+      - RDBMS have a ton of modes
+        - Not ideal for control systems!
+	- How can a query be executed, can change and potentially critically fail
+	- CONTROL how the databases work (think Aurora with separate cusotmer DB kernel; replogs stored elsewhere)
+      - Push configs every N seconds, implicity creates more reliable systems. you know what to expect
+        - Feedback loop if not!
+      - Health check polling intervals
+        - Health checks happen all the time, polling happens all the time
+	- Network
+
+- Questions
+  - Common Examples Outside of Infra
+    - Take feature flags and distribute to large fleet
+  - When to prioritize resiliency in control planes?
+    - Stability and resilience, business impact potential > product feature
+  - Institutionalize these best practices
+    - Tech talk every week
+    - Design review process
+    - Operational Readiness Review
+
+ARC307 Intuit TurboTax DataCenter -> AWS Migration; SRE
+- ENGINEER SIMPLICITY (think MVP)! DON'T OVERENGINEER!
+- Highly seasonal workload
+  - 3 traffic peaks, two in early year
+- Minimal viable architecture! Keep it simple. For migration:
+  - Solve most difficult problems first
+  - "Pick the fruit at the top of the tree"
+  - Dial in and out of AWS provider, cloud agnostic
+- Datacenter and Cloud "multipathing"
+  - DC A, DC B, us-west with another stack
+  - Implemented with R53 hosted zones
+- Things did not do
+  - Cassandra to DDB. Defer and wait.
+  - Containers. No one ran containers in datacenter env
+- Load testing - intuit Tank
+  - Weekly / BiWeekly
+  - End to End
+  - Full traffic load testing on all active sites
+- Monitor/Observability/Response
+  - They define monitoring as statistics "without context"
+  - They define observability that has something with
+  - Site reponse capabilities
+    - What are the levers that we pull?
+    - What is the recovery plan?
+    - Is it automated?
+    - Get a feedback loop to dev teams to tell their code to scale (capacity planning full circle)
+  - Fail forward
+    - Protect customer experience
+    - Already tested alternate site under full load
+    - Think E2E
+      - Capacity testing, synthetic monitoring
+      - Do not run playbooks that has not been rehearsed
+      - Don't maintain impossibly to maintain playbook count
+    - Fail back ASAP
+- Data migration
+  - FIFO approach to data migration over the years
+- Site incidents during migration
+  - Risk analysis on fix for a given incident, consider time to mitigate
+    - Data center fix would have taken more time
+- Key Takeways
+  - Test under full load
+  - Blameless Postmortems/RCA
+
+NET313 VPC Security at the Speed of Light
+- Amazon R53 resolver for hybrid clouds
+  - Bidirectional name forwarding
+- VPC on the Wire
+  - Offloading VPC network routing to chip SoC
+  - CustomerIP --> VPC Encapsulation --> AWS_IP between physical hosts
+    - De-encapsulation of VPC encapsulation on Blackfoot edge devices
+    - Rumor has it that Blackfoot are software PAT devices, not dedicated H/W
+- Mapping Service (Packet Level Security)
+  - VIF coresponds to Physical IP
+  - Mappings are cached, ultra low latency
+  - Ensures data plane security; obviates traditional ARP poisioning / MAC spoofing
+    - Does that packet originate correctly?
+    - Is the destiation proved?
+    - Similar to RPF
+- Connection Stateful Security
+  - NLB : native VPC service, terabits per second
+  - NAT GW: stateful NATting
+  - Flow tracking
+    - 5/6 tuple, standard NetFlow
+    - SEQ/ACK validation
+    - UDP IDs
+    - Datagram
+    - Packet mismatched are DROP'ed
+  - Virtual TAP / SPAN monitoring for ???
+- HyperPlane Nodes
+  - Assurance for distributed state tracking of flows
+  - Only knows about flows
+  - Does NOT know about customer VPC mappings
+  - Is a multi-tenant system
+- PrivateLink
+  - Is powered by HyperPlane
+  - Consumer model, expose VIP
